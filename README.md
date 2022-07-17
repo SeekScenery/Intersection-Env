@@ -51,6 +51,12 @@ class EnvIntersection:
         """
         根据车辆类型 选用风险场
         """
+
+    def test_git_use(self):
+        "
+        
+        "
+        pass
         
     
     
