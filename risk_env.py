@@ -1,13 +1,21 @@
+from re import I
+from shutil import register_archive_format
 from matplotlib import animation
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+import matplotlib.patches as patches
+from matplotlib.patches import Circle
 import numpy as np
 from PIL import Image
 import os
 import matplotlib.animation as animation
+import utils 
 
 
 NUM_SPAWN_POINT = 30
+
+# define color list 
+COLOR_LIST = ['tomato', 'orange', 'yellow', 'lawngreen', 'lime', 'cyan', 'darkorchid', 'fuchsia']
 
 class EnvIntersection:
     """
@@ -39,8 +47,10 @@ class EnvIntersection:
         self.load_vehicle_img()
         # 创建画布
         self.create_figure_2Dax()
-        self.is_create_3D = False
 
+
+        self.is_create_3D = False
+        self.road_line()
         # 生成车辆跟踪轨迹
         self.generate_follow_tr()
         # 动画
@@ -204,6 +214,8 @@ class EnvIntersection:
 
         turn_left_radius = self.boundary_radius + 1.5 * self.road_width 
         turn_right_radius = self.boundary_radius + 0.5 * self.road_width 
+        self.turn_left_radius = turn_left_radius
+        self.turn_right_radius = turn_right_radius
         # 左 右转 弧长增幅 微元
         self.ds_turn_left = (turn_left_radius * (np.pi/2 - 0.2)) / self.nums_spawn_point
         self.ds_turn_right = (turn_right_radius * (np.pi/2 - 0.2)) / self.nums_spawn_point
@@ -218,6 +230,10 @@ class EnvIntersection:
         max_ = self.road_net_center + self.road_width + self.boundary_radius 
         turn_left_center = [min_, min_]
         turn_right_center = [max_, min_]
+        print(turn_right_center)
+        print(turn_left_center)
+
+
         # 左右转轨迹
         x_turn_left_tr = turn_left_center[0] + turn_left_radius * np.cos(turn_left_theta_range)
         y_turn_left_tr = turn_left_center[1] + turn_left_radius * np.sin(turn_left_theta_range)
@@ -234,6 +250,7 @@ class EnvIntersection:
         # 左转 跟踪直线
         l_var_max = self.road_net_center - self.road_width - self.boundary_radius 
         l_var_min = l_var_max - self.road_length
+        self.l_var_max = l_var_max
         # 一个变化的array 和 一个固定的array 
         low_var_array = np.linspace(l_var_min, l_var_max, self.nums_spawn_point)
         high_fix_array = [self.road_net_center + self.road_width/2.0 for i in range(len(low_var_array))]
@@ -390,7 +407,7 @@ class EnvIntersection:
             
 
 
-    def vehicle_risk_intensity(self, vehicle_path_info: "list") -> None:
+    def vehicle_risk_intensity(self, arc: "list", is_ego=True) -> None:
         """
         车辆沿车辆路径 的固定方向的风险场函数        
         定义 自车的风险强度函数vehicle_postion:"list", vehicle_speed:"float"
@@ -399,15 +416,38 @@ class EnvIntersection:
         """
         #  定义 风险函数 可整理为单独的函数 y = a*e^(-x+b) + c
         # 这几个参数 可右车辆的位置 速度决定
-        a = 0.2
-        b = 35
-        c = 4
-        arc = np.array(vehicle_path_info[3])
+        if is_ego: 
+            a = 0.2
+            b = 35
+            c = 4
+        else:
+            a = 0.5
+            b = 30
+            c = 4
         # ego_y = a1 * np.exp(-ego_arc + b1) + c1
         # ego_y = np.power(2, -ego_arc)
         risk_intensity = a * (arc - b)**2 + c 
-        # print(f"risk_intensity:{risk_intensity}")
         return risk_intensity
+
+    def get_conflict_distances(self, intensity):
+        """
+        根据风险强度  反算  车辆弧长强度 冲突点到产生这样大小风险强度 车辆的路径长度
+        计算 各冲突点 到对应车辆的 路径长度 
+        实际情况下 车辆转弯 和 直行的 风险函数是不一样的 但是这里 假设 它们是一样的
+        """
+        # 定义其他车辆的风险域函数
+        a = 0.5 
+        b = 30
+        c = 4
+        distance_arc = b - np.sqrt((intensity - c) / a)
+        return distance_arc   
+    
+        
+    def params_risk_intensity_ego(self, ego_vehicle_info: "list"):
+        """
+        根据车辆参数实时更新 风险场的参数
+        """
+        pass
 
     # 生成热力图的辅助函数 传入参数 车辆轨迹 弧长变化 轨迹转角
     def risk_assist_to_xyz(self, vehicle_path_info: "list", is_ego=True):
@@ -417,13 +457,13 @@ class EnvIntersection:
         x_tr = vehicle_path_info[0]
         y_tr = vehicle_path_info[1]
         theta = vehicle_path_info[2]
-        # arc = vehicle_path_info[3]
+        arc = vehicle_path_info[3]
 
         # 选址风险场函数 
         if is_ego:
-            risk_intensity = self.vehicle_risk_intensity(vehicle_path_info)
+            risk_intensity = self.vehicle_risk_intensity(arc)
         else:
-            risk_intensity = self.vehicle_risk_intensity(vehicle_path_info)
+            risk_intensity = self.vehicle_risk_intensity(arc)
         X = []
         Y = []
         Z = []
@@ -524,7 +564,7 @@ class EnvIntersection:
         # 记录车辆的路径信息
         self.vehicles_path_info.append([X_path, Y_path, theta_path, arc_path])
         # 测试 一下 路径
-        # self.ax.plot(X_path, Y_path, 'r')
+        self.ax.plot(X_path, Y_path, 'r')
 
     def generate_all_vehicle_risk(self):
         """
@@ -553,7 +593,116 @@ class EnvIntersection:
         """
         根据自车的位置 确定自车的与周边车辆的冲突点
         """
+        conflict_points = {"left_straight": [-1.6334, -1.75], "left_turn": [-3.83, 0.0], \
+                            "right_straight": [-10.0, 1.75], "right_turn": [0.0, -3.83], \
+                            "up_straight": [-1.75, -1.6334], "up_turn": [-10.0, 1.75]} 
+        current_conflict = {}
+        
+        conflict_visible_layer = 5
+        # 设置透明度
+        conflict_alpha = 0.9
+        color_index = 0
+        arc_ = None
 
+        for key, value in zip(conflict_points.keys(), conflict_points.values()):
+            temp = utils.convert_cartesian_polar([-10.0, -10.0, 11.75], value)
+            if value[1] > ego_position[1]:
+                # 通过判断 自车的位置 来计算车辆的到冲突点的弧长
+                if ego_position[2] > 90:
+                    ego_theta = np.pi * ego_position[2] / 180
+                    different_theta = temp - ego_theta
+                    arc_ = self.turn_left_radius * different_theta
+                else:
+                    arc_ = self.turn_left_radius * temp + (self.l_var_max - ego_position[1])
+                # 求冲突点 风险强度
+                intensity = self.vehicle_risk_intensity(arc_)
+                # 求要产生 同等风险强度 与自车 冲突车辆的位置
+                distance_arc = self.get_conflict_distances(intensity)
+
+                value.append(distance_arc)
+
+                    
+                current_conflict[key] = value
+                circle_conflict_l_t = Circle(value[:-1], radius=1, facecolor=COLOR_LIST[color_index%7], alpha=conflict_alpha, zorder=conflict_visible_layer)
+                color_index += 1
+                self.ax.add_patch(circle_conflict_l_t)
+        self.calculate_conflict_boundary(current_conflict)
+
+        return current_conflict
+
+    def calculate_conflict_boundary(self, current_conflict:"dict"):
+        """
+        根据冲突点单位位置信息 计算对于车辆冲突边界
+        """
+        # 求转弯 车辆边界位置 先将冲突点位置 进行旋转 旋转为初始状态 
+        for key, value in current_conflict.items():
+            # 直行
+            if key == "left_straight":
+                position_ = value[:-1]
+                position_ = [position_[0]-value[-1], position_[1], 0]
+            if key == "right_straight":
+                position_ = value[:-1]
+                position_ = [position_[0]+value[-1], position_[1], 180]
+            if key == "up_straight":
+                position_ = value[:-1]
+                position_ = [position_[0], position_[1]+value[-1], -90]
+            
+            # 转弯 
+            ang = None
+            if key == "left_turn" or key == "right_turn":
+                if key == "left_turn":
+                    r_angle = np.pi/2
+                    ang = 0
+                else:
+                    r_angle = -np.pi/2
+                    ang = 180
+                position_ = value[:-1]
+                position_ = utils.rotate_point(position_[0], position_[1], [0, 0], r_angle)
+                temp = utils.convert_cartesian_polar([-10.0, -10.0, 11.75], position_)
+                arc_start = temp * self.turn_left_radius
+                if arc_start > value[-1]:
+                    arc_dif = arc_start - value[-1]
+                    theta = arc_dif * 1.0 / self.turn_left_radius
+                    position_index = int(theta / self.ds_turn_left) + self.nums_spawn_point - 1
+                    print(position_index)
+                    X, Y, theta = self.vehicle_follow_trs["left"]
+                    position_ = [X[position_index], Y[position_index], 180 * (theta[position_index]-r_angle)/np.pi] 
+                else:
+                    arc_dif = value[-1] - arc_start
+                    position_ = [self.road_net_center + self.road_width/2.0, -10.0 - arc_dif]
+                    position_ = utils.rotate_point(position_[0], position_[1], [0, 0], -r_angle)
+                    position_ = [position_[0], position_[1], ang]
+
+            if key == "up_turn":
+                r_angle = np.pi
+                position_ = value[:-1]
+                print(position_)
+                position_ = utils.rotate_point(position_[0], position_[1], [0, 0], r_angle)
+                print(position_)
+                temp = utils.convert_cartesian_polar([10.0, -10.0, 8.25], position_)
+                print(temp)
+                arc_start = temp * self.turn_right_radius
+                if arc_start > value[-1]:
+                    arc_dif = arc_start - value[-1]
+                    theta = arc_dif * 1.0 / self.turn_right_radius
+                    print(theta)
+                    position_index = int(theta / self.ds_turn_left) + self.nums_spawn_point
+                    X, Y, theta = self.vehicle_follow_trs["right"]
+                    position_ = [X[position_index], Y[position_index], 180 * (theta[position_index]-r_angle)/np.pi] 
+                    position_xy = utils.rotate_point(position_[0], position_[1], [0, 0], -r_angle)
+                    position_ = [position_xy[0], position_xy[1], position_[2]]
+                else:
+                    arc_dif = value[-1] - arc_start
+                    position_ = [self.road_net_center + self.road_width/2.0, -10.0 - arc_dif]
+                    position_ = utils.rotate_point(position_[0], position_[1], [0, 0], -r_angle)
+                    position_ = [position_[0], position_[1], 180 * (-np.pi/2)/np.pi]
+            print("============================")
+            print(position_)
+            self.spawn_vehicle(position_)
+
+
+        # 然后 将求的车辆边界位置 旋转回去
+        # 求直线
         
     def perception_interesting_field(self, vehicle_position:"list", front_length=15, a_r_l=0.03):
         """
@@ -679,28 +828,28 @@ class EnvIntersection:
 
 
 
-
 test_env = EnvIntersection()
 
-test_env.road_line()
-# test_env.spawn_vehicle([1.75, -20, 90], True)
-# test_env.spawn_vehicle([1.75, 20, -90])
-# for i in range(3*NUM_SPAWN_POINT):
-#     test_env.get_vehicle_spawn_postion("down", "left",i)
-test_env.generate_animated_follow_tr("down", "left")
-# test_env.risk_field()
-# test_env.is_vehicle_and_risk = False
-# position = test_env.get_vehicle_spawn_postion("down", "left",24, 28, True)
-# # test_env.spawn_vehicle(position)
-# position = test_env.get_vehicle_spawn_postion("right", "left", 23, 20)
-# position = test_env.get_vehicle_spawn_postion("up", "right", 10, 30)
-# position = test_env.get_vehicle_spawn_postion("left", "left", 26, 12)
-# # test_env.spawn_vehicle(position)
-# test_env.generate_vehicle_path(test_env.vehicle_spawn_info[0])
-# test_env.spawn_all_vehicle()
-# test_env.generate_all_vehicle_path()
-# test_env.risk_assist_to_xyz(test_env.vehicles_path_info[0])
-# test_env.generate_all_vehicle_risk()
+# test_env.road_line()
+# # test_env.spawn_vehicle([1.75, -20, 90], True)
+# # test_env.spawn_vehicle([1.75, 20, -90])
+# # for i in range(3*NUM_SPAWN_POINT):
+# #     test_env.get_vehicle_spawn_postion("down", "left",i)
+# test_env.generate_animated_follow_tr("down", "left")
+# # test_env.risk_field()
+# # test_env.is_vehicle_and_risk = False
+position = test_env.get_vehicle_spawn_postion("down", "left",20, 28, True)
+test_env.spawn_vehicle(position)
+print(test_env.vehicle_conflict_point(position))
+position = test_env.get_vehicle_spawn_postion("right", "left", 23, 20)
+# # position = test_env.get_vehicle_spawn_postion("up", "right", 10, 30)
+# # position = test_env.get_vehicle_spawn_postion("left", "left", 26, 12)
+# # # test_env.spawn_vehicle(position)
+test_env.generate_vehicle_path(test_env.vehicles_spawn_info[0])
+test_env.spawn_all_vehicle()
+test_env.generate_all_vehicle_path()
+# # test_env.risk_assist_to_xyz(test_env.vehicles_path_info[0])
+# # test_env.generate_all_vehicle_risk()
 
 test_env.env_show()
         

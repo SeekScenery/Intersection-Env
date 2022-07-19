@@ -100,3 +100,29 @@ def risk_field():
     plt.show()
 
 risk_field()
+
+        # print(turn_left_radius)
+        # print(turn_left_center)
+        # print(turn_right_radius)
+
+        # # 计算轨迹的交点 圆 和 直线 的交点  圆和圆 的交点
+        # circle_params = [min_, min_]
+        # circle_params.append(turn_left_radius) 
+        # # 左路口
+        # result = utils.calculate_circle_point('y', self.road_net_center - self.road_width/2.0, circle_params)
+        # cir_left_result = utils.circles_intersection_point(circle_params, [min_, max_, turn_left_radius])
+        # print("left cross")
+        # print(f"straight:{result}")
+        # print(f"turn :{cir_left_result}")
+        # # 右路口  
+        # result = utils.calculate_circle_point('y', self.road_net_center + self.road_width/2.0, circle_params)
+        # cir_left_result = utils.circles_intersection_point(circle_params, [max_, min_, turn_left_radius])
+        # print("right cross")
+        # print(f"straight:{result}")
+        # print(f"turn :{cir_left_result}")
+        # # 上路口
+        # result = utils.calculate_circle_point('x', self.road_net_center - self.road_width/2.0, circle_params)
+        # cir_left_result = utils.circles_intersection_point(circle_params, [min_, max_, turn_right_radius])
+        # print("up cross")
+        # print(f"straight:{result}")
+        # print(f"turn :{cir_left_result}")
